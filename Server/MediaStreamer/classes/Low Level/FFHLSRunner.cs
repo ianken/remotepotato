@@ -4,7 +4,9 @@ using System.Text;
 using System.Linq;
 using System.IO;
 using System.Threading;
+using System.Management;
 using FatAttitude.MediaStreamer.HLS;
+using System.Diagnostics;
 
 
 namespace FatAttitude.MediaStreamer
@@ -37,7 +39,7 @@ namespace FatAttitude.MediaStreamer
             Store = segStore;
 
             // Defaults
-            EncodingParameters = new VideoEncodingParameters();
+            //EncodingParameters = new VideoEncodingParameters(); // AFAICT this is never used....
             AudioSyncAmount = 1;  // 2 can create streaming issues
         }
         public FFHLSRunner(string pathToTools, SegmentStore store, VideoEncodingParameters vidParameters)
@@ -288,18 +290,39 @@ namespace FatAttitude.MediaStreamer
          */
         void ConstructArguments()
         {
+            //Get info on intput file...
+            MediaInfoGrabber g = new MediaInfoGrabber(PathToTools, Environment.GetEnvironmentVariable("tmp"), InputFile);
+            g.GetInfo();
+            
             // Use either the standard ffmpeg template or a custom one
             string strFFMpegTemplate = (string.IsNullOrWhiteSpace(EncodingParameters.CustomFFMpegTemplate)) ?
-                @"{THREADS} {H264PROFILE} {H264LEVEL} -flags +loop -g 30 -keyint_min 1 -bf 0 -b_strategy 0 -flags2 -wpred-dct8x8 -cmp +chroma -deblockalpha 0 -deblockbeta 0 -refs 1 {MOTIONSEARCHRANGE} {SUBQ} {PARTITIONS} -trellis 0 -coder 0 -sc_threshold 40 -i_qfactor 0.71 -qcomp 0.6 -qdiff 4 -rc_eq 'blurCplx^(1-qComp)' {MAPPINGS} {STARTTIME} {INPUTFILE} {ASPECT} {FRAMESIZE} {DEINTERLACE} -y {AUDIOSYNC} -f mpegts -vcodec libx264 {VIDEOBITRATE} {VIDEOBITRATEDEVIATION} -qmax 48 -qmin 2 -r 25 {AUDIOCODEC} {AUDIOBITRATE} {AUDIOSAMPLERATE} {AUDIOCHANNELS} {VOLUMELEVEL}" :                
+                @"{THREADS} {H264PROFILE} {H264LEVEL} -flags +loop -g 30 -keyint_min 1 -bf 0 -b_strategy 0 -flags2 -wpred-dct8x8 -cmp +chroma -deblockalpha 0 -deblockbeta 0 -refs 1 {MOTIONSEARCHRANGE} {SUBQ} {PARTITIONS} -trellis 0 -coder 0 -sc_threshold 40 -i_qfactor 0.71 -qcomp 0.6 -qdiff 4 -rc_eq 'blurCplx^(1-qComp)' {MAPPINGS} {STARTTIME} {INPUTFILE} {ASPECT} {FRAMESIZE} {DEINTERLACE} -y {AUDIOSYNC} -f mpegts -vcodec libx264 {VIDEOBITRATE} {VIDEOBITRATEDEVIATION} -qmax 48 -qmin 2 -r {FRAMERATE} {AUDIOCODEC} {AUDIOBITRATE} {AUDIOSAMPLERATE} {AUDIOCHANNELS} {VOLUMELEVEL}" :                
                 EncodingParameters.CustomFFMpegTemplate;
 
             // Segment length and offset
             segmentArguments.AddArgCouple("--segment-length", EncodingParameters.SegmentDuration.ToString());
             segmentArguments.AddArgCouple("--segment-offset", StartAtSeconds.ToString() );
             cmdArguments.AddArg(segmentArguments.ToString());
-            
+
             // Multi threads
-            strFFMpegTemplate = strFFMpegTemplate.Replace("{THREADS}", "-threads 4");
+            // Set to number of physical cores.
+            int coreCount = 0;
+            foreach (var item in new System.Management.ManagementObjectSearcher("Select * from Win32_Processor").Get())
+            {
+                coreCount += int.Parse(item["NumberOfCores"].ToString());
+            }
+            strFFMpegTemplate = strFFMpegTemplate.Replace("{THREADS}", "-threads " + coreCount.ToString());
+
+            string rate = g.Info.AVVideoStreams[0].frameRate;
+            Debug.WriteLine("Detected frame rate is: " + rate);
+            if (Convert.ToDouble(rate) > 31)
+            {
+                Debug.WriteLine("Computed frame rate:" + (Convert.ToDouble(rate) / 2).ToString());
+                strFFMpegTemplate = strFFMpegTemplate.Replace("{FRAMERATE}", (Convert.ToDouble(rate) / 2).ToString()); //If over 30Hz, assume 50 or 59.94Hz and convert to 25 or 29.97 
+
+            }
+            else
+                strFFMpegTemplate = strFFMpegTemplate.Replace("{FRAMERATE}", rate);
 
             // Me Range
             strFFMpegTemplate = strFFMpegTemplate.Replace("{MOTIONSEARCHRANGE}", ("-me_range " + EncodingParameters.MotionSearchRange.ToString()));
@@ -328,14 +351,30 @@ namespace FatAttitude.MediaStreamer
 
             // Aspect ratio and frame size
             string strAspectRatio = (EncodingParameters.OutputSquarePixels) ? "-aspect 1:1" : "-aspect " + EncodingParameters.AspectRatio;
+            Debug.WriteLine("EncodingParameters indicated Aspect is: " + EncodingParameters.AspectRatio);
             strFFMpegTemplate = strFFMpegTemplate.Replace("{ASPECT}", strAspectRatio);
+            Debug.WriteLine("Selected Aspect is: " + strAspectRatio);
+
+            //Ensure viudeo fits within selected display size while maintain square pixels
             string strFrameSize = "-s " + EncodingParameters.ConstrainedSize;
             strFFMpegTemplate = strFFMpegTemplate.Replace("{FRAMESIZE}", strFrameSize);
-
+            Debug.WriteLine("Selected frame size is: " + strFrameSize);
 
             // Deinterlace (experimental)
+            // Only deinterlace SD or 1080i HD TV content
+            // Assume anything else is progressive. 
             string strDeinterlace =  (EncodingParameters.DeInterlace) ? "-deinterlace" : "";
-            strFFMpegTemplate = strFFMpegTemplate.Replace("{DEINTERLACE}", strDeinterlace);
+
+            if (((g.Info.AVVideoStreams[0].Height < 700) || (g.Info.AVVideoStreams[0].Height > 1000)) & (InputFile.ToLower().Contains(".wtv") || InputFile.ToLower().Contains(".dvr-ms")))
+            {
+                strFFMpegTemplate = strFFMpegTemplate.Replace("{DEINTERLACE}", strDeinterlace);
+                Debug.WriteLine("Enabling deinterlacing");
+            }
+            else
+            {
+                strFFMpegTemplate = strFFMpegTemplate.Replace("{DEINTERLACE}", "");
+                Debug.WriteLine("Disabling deinterlacing");
+            }
 
             // OPTIONAL FOR LATER:  -vf "crop=720:572:0:2, scale=568:320"
             // Think this means crop to the aspect ratio, then scale to the normal frame
@@ -439,3 +478,4 @@ namespace FatAttitude.MediaStreamer
 
 
 }
+

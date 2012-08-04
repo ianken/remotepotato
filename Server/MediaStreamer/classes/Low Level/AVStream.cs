@@ -16,6 +16,7 @@ namespace FatAttitude.MediaStreamer
         public AudioStreamTypes AudioCodecSubType;
         public int Width;
         public int Height;
+        public string frameRate;
         public double DurationSeconds;
         public string SampleAspectRatio;
         public string DisplayAspectRatio;

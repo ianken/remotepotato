@@ -339,6 +339,11 @@ nb_frames=6623
                     if (findPrefixAndRatioInString(strText, "dar", out strDARValue))
                         s.DisplayAspectRatio= strDARValue;
 
+                    //Determine Framerate
+                    string frameRate;
+                    if (findFrameRate(strText, "tbr", out frameRate))
+                        s.frameRate = frameRate;
+                    
                     // Now split into comma-delimited strings
                     List<string> subParts = splitByDelimiter(strText, ",");
                     if (subParts.Count < 1) return false;
@@ -368,6 +373,21 @@ nb_frames=6623
                 return false;
             }
         }
+
+        bool findFrameRate(string strText, string strNumberSuffix, out string Number)
+        {
+            Number = null;
+
+            Regex exp = new Regex(@"([-+]?[0-9]*\.?[0-9]+)\s(" + strNumberSuffix + @")");
+            Match m = exp.Match(strText);
+            if (!m.Success) return false;
+
+            Group gNumber = m.Groups[1];
+            if (!gNumber.Success) return false;
+            Number = gNumber.Value;
+            return true;
+        }
+        
         bool findSuffixAndNumberInString(string strText, string strNumberSuffix, out string Number)
         {
             Number = null;
@@ -412,6 +432,7 @@ nb_frames=6623
 
             return true;
         }
+
         bool ProcessStreamIndexLine(ref AVStream s, string strText)
         {
             strText = strText.Replace("stream", "").Trim();
