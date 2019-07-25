@@ -3,6 +3,10 @@ remotepotato
 Remote Potato Server - a free streaming server to stream all media on a PC to browsers, apps, etc
 See www.remotepotato.com
 
+Readme Update: This fork addresses a few issues with the original solution: namely the hard coded 24Hz frame rate for video. 
+
+LOL. Should have added this comment a few years ago.
+
 
 Build Instructions
 ==================
